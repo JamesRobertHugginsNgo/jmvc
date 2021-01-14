@@ -15,7 +15,8 @@ const jcollection = jmvc([
 	['DATA 2.0', 'DATA 2.1', 'DATA 2.2']
 ]);
 
-jmvc(document.createElement('table'))
+jmvc.view('table')
 	.matrix(jcollection)
 	.appendTo(app)
 	.render();
+
