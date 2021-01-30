@@ -1,17 +1,15 @@
-/* global jmvc */
+/* global Jmvc */
 
-jmvc.factories.test = (() => {
+(() => {
 	let initialized = false;
-
-	const initialize = () => {
+	function initialize() {
 		if (initialized) {
 			return;
 		}
-
 		initialized = true;
 
-		jmvc.view('style')
-			.style(jmvc({
+		new Jmvc.View.Style()
+			.setModel(new Jmvc({
 				'div.test': {
 					'background-color': '#dff9fb',
 					'border': '1px dashed #666666',
@@ -27,45 +25,32 @@ jmvc.factories.test = (() => {
 				}
 			}))
 			.render()
-			.appendTo(document.head);
-	};
-
-	function test(jModel = jmvc({})) {
-		initialize();
-
-		jModel = jmvc(jModel)
-			.on(jmvc.eventEnum.CHANGE, () => {
-				this.render();
-			});
-
-		this.setAttributes({
-			'class': 'test',
-			'data-id': () => jModel.get('id')
-		});
-
-		this.setChildren([
-			jmvc.view('button')
-				.setAttributes({
-					'type': 'button'
-				})
-				.setChildren([
-					() => jmvc.text('BEFORE [', jModel.get('id') || 'EMPTY', '] AFTER ')
-				])
-				.on('click', () => {
-					jModel.set('id', Math.random() * 100);
-				})
-		]);
-
-		return this;
+			.release();
 	}
 
-	return wrapper => {
-		if (!jmvc.isValidView(wrapper.reference) || !(wrapper.reference instanceof HTMLDivElement)) {
-			return;
+	Jmvc.View.Test = function () {
+		if (!(this instanceof Jmvc.View.Test)) {
+			return new Jmvc.View.Test();
 		}
 
-		Object.assign(wrapper, {
-			test
+		Jmvc.View.call(this, 'div', () => {
+			this
+				.setAttributes({
+					'class': 'test',
+					'data-id': () => this.model.context.id
+				})
+				.setChildren([
+					new Jmvc.View('button')
+						.retain()
+						.setAttributes({ 'type': 'button' })
+						.setChildren([() => `{{ ${this.model.context.id || 'EMPTY'} }}`])
+						.on('click', () => this.model.set('id', Math.random() * 100))
+				]);
+
+			initialize();
 		});
 	};
+
+	Jmvc.View.Test.prototype = Object.create(Jmvc.View.prototype);
+	Jmvc.View.Test.prototype.constructor = Jmvc.View.Test;
 })();

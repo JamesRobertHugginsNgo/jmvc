@@ -1,491 +1,433 @@
-function jmvc(reference) {
-	if (jmvc.isWrapper(reference)) {
-		return reference;
+const Jmvc = function (context, callback) {
+	if (!(this instanceof Jmvc)) {
+		return new Jmvc(context);
 	}
 
-	const wrapper = {
-		reference,
-		isJmvcWrapper: true,
-		initializers: [],
-		terminators: [],
-		status: jmvc.statusEnum.NEW
-	};
+	this.context = context;
+	this.retainCount = 0;
+	this.events = {};
+	this.emitters = [];
 
-	for (const key in jmvc.factories) {
-		jmvc.factories[key](wrapper);
+	if (callback) {
+		callback.call(this);
 	}
 
-	return wrapper.initialize();
-}
-
-jmvc.isWrapper = wrapper => {
-	if (Object.prototype.hasOwnProperty.call(wrapper, 'isJmvcWrapper') && wrapper.isJmvcWrapper) {
-		return true;
-	}
-
-	return false;
+	return this.trigger('initialize');
 };
 
-jmvc.eventEnum = {
-	INITIALIZE: 'initialized',
-	TERMINATE: 'terminated',
-	CHANGE: 'change',
-	INDIRECT_CHANGE: 'indirect-change',
-	RENDER: 'render',
-	RENDER_ATTRIBUTES: 'render:attributes',
-	RENDER_CHILDREN: 'render:children'
+Jmvc.prototype.retain = function () {
+	this.retainCount++;
+	return this.trigger('retain');
 };
 
-jmvc.statusEnum = {
-	NEW: 'New',
-	INITIALIZED: 'Initialized',
-	TERMINATED: 'Terminated'
+Jmvc.prototype.release = function () {
+	if (this.retainCount === 0) {
+		return this.terminate();
+	}
+
+	this.retainCount--;
+	return this.trigger('release');
 };
 
-jmvc.factories = {};
+Jmvc.prototype.terminate = function () {
+	this.off();
+	this.stopListeningTo();
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// INSTANCE
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	return this.trigger('terminate');
+};
 
-jmvc.factories.instance = (() => {
-	function initialize() {
-		if (this.status === jmvc.statusEnum.INITIALIZED) {
-			return this;
-		}
+Jmvc.prototype.callback = function (callback) {
+	callback(this);
+	return this;
+};
 
-		const length = this.initializers.length;
-		for (let index = 0; index < length; index++) {
-			this.initializers[index](this);
-		}
-
-		this.status = jmvc.statusEnum.INITIALIZED;
-
-		this.trigger(jmvc.eventEnum.INITIALIZE);
-
-		return this;
-	}
-
-	function terminate() {
-		if (this.status === jmvc.statusEnum.TERMINATED) {
-			return this;
-		}
-
-		const length = this.terminators.length;
-		for (let index = 0; index < length; index++) {
-			this.terminators[index](this);
-		}
-
-		this.status = jmvc.statusEnum.TERMINATED;
-
-		this.trigger(jmvc.eventEnum.TERMINATE);
-
-		return this;
-	}
-
-	function callback(func) {
-		func.call(this);
-
-		return this;
-	}
-
-	return wrapper => {
-		Object.assign(wrapper, {
-			initialize,
-			terminate,
-			callback
-		});
-	};
-})();
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// EVENT
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-jmvc.factories.event = (() => {
-	const terminator = wrapper => {
-		wrapper.off();
-	};
-
-	function on(name, callback, once = false, context = this) {
-		if (!this.events[name]) {
-			this.events[name] = {
-				callbacks: []
-			};
-
-			if (this.reference instanceof EventTarget) {
-				const listener = {
-					handleEvent: event => {
-						this.trigger(name, event);
-					}
-				};
-				this.reference.addEventListener(name, listener);
-				this.events[name].listener = listener;
-			}
-		}
-
-		this.events[name].callbacks.push({
-			callback,
-			once,
-			context
-		});
-
-		return this;
-	}
-
-	function off(name, callback, once, context) {
-		const next = name => {
-			const callbacks = this.events[name].callbacks;
-
-			let index = 0;
-			while (index < callbacks.length) {
-				if ((callback == null || callback === callbacks[index].callback)
-					&& (once == null || once === callbacks[index].once)
-					&& (context == null || context === callbacks[index].context)) {
-
-					this.events[name].callbacks.splice(index, 1);
-
-					continue;
-				}
-
-				index++;
-			}
-
-			if (callbacks.length === 0) {
-				if (this.reference instanceof EventTarget) {
-					this.reference.removeEventListener(name, this.events[name].listener);
-				}
-
-				delete this.events[name];
-			}
+Jmvc.prototype.on = function (event, callback, once = false, owner = this) {
+	if (!this.events[event]) {
+		this.events[event] = {
+			callbacks: []
 		};
 
-		if (name) {
-			if (this.events[name]) {
-				next(name);
-			}
-		} else {
-			for (const key in this.events) {
-				next(key);
-			}
+		if (this.context instanceof EventTarget) {
+			this.events[event].listener = {
+				handleEvent: (...args) => {
+					this.trigger(event, ...args);
+				}
+			};
+			this.context.addEventListener(event, this.events[event].listener);
 		}
-
-		return this;
 	}
 
-	function trigger(name, ...args) {
-		if (!this.events[name]) {
-			return this;
-		}
+	this.events[event].callbacks.push({ event, callback, once, owner });
 
-		const callbacks = this.events[name].callbacks;
+	if (owner !== this && owner.emitters.indexOf(this) === -1) {
+		owner.emitters.push(this);
+	}
 
+	return this;
+};
+
+Jmvc.prototype.off = function (eventArg, callbackArg, onceArg, ownerArg) {
+	const removedOwners = [];
+
+	const process = (event) => {
 		let index = 0;
-		while (index < callbacks.length) {
-			const { callback, once, context } = callbacks[index];
+		while (index < this.events[event].callbacks.length) {
+			const { callback, once, owner } = this.events[event].callbacks[index];
+			if ((callbackArg == null || callbackArg === callback)
+				&& (onceArg == null || onceArg === once)
+				&& (ownerArg == null || ownerArg === owner)) {
 
-			if (context.status === jmvc.statusEnum.TERMINATED) {
-				callbacks.splice(index, 1);
-				continue;
-			}
+				if (removedOwners.indexOf(owner) === -1) {
+					removedOwners.push(owner);
+				}
 
-			callback.call(context, ...args);
+				this.events[event].callbacks.splice(index, 1);
 
-			if (once) {
-				callbacks.splice(index, 1);
 				continue;
 			}
 
 			index++;
 		}
 
-		if (callbacks.length === 0) {
-			if (this.reference instanceof EventTarget) {
-				this.reference.removeEventListener(name, this.events[name].listener);
+		if (index === 0) {
+			if (this.events[event].listener) {
+				this.context.removeEventListener(event, this.events[event].listener);
 			}
 
-			delete this.events[name];
+			delete this.events[event];
+		}
+	};
+
+	if (eventArg != null) {
+		if (this.events[eventArg]) {
+			process(eventArg);
+		}
+	} else {
+		for (const event in this.events) {
+			process(event);
+		}
+	}
+
+	removeOwnersLoop:
+	for (let index = 0, length = removedOwners.length; index < length; index++) {
+		for (const key in this.events) {
+			if (!this.events[key].callbacks.every((callback) => callback.owner !== ownerArg)) {
+				continue removeOwnersLoop;
+			}
 		}
 
+		const thisIndex = removedOwners[index].emitters.indexOf(this);
+		removedOwners[index].emitters.splice(thisIndex, 1);
+	}
+
+	return this;
+};
+
+Jmvc.prototype.trigger = function (event, ...args) {
+	if (!this.events[event]) {
 		return this;
 	}
 
-	function listenTo(context, name, callback, once) {
-		context.on(name, callback, once, this);
-
-		return this;
+	const callbacks = [...this.events[event].callbacks];
+	for (let index = 0, length = callbacks.length; index < length; index++) {
+		const { callback, owner } = callbacks[index];
+		callback.call(owner, ...args);
 	}
 
-	function stopListening(context, name, callback, once) {
-		context.off(name, callback, once, this);
+	return this.off(event, null, true);
+};
 
-		return this;
+Jmvc.prototype.listenTo = function (other, event, callback, once) {
+	other.on(event, callback, once, this);
+	return this;
+};
+
+Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
+	if (other != null) {
+		other.off(event, callback, once, this);
+	} else {
+		for (let index = 0, length = this.emitters.length; index < length; index++) {
+			this.emitters[index].off(event, callback, once, this);
+		}
 	}
 
-	return wrapper => {
-		wrapper.terminators.push(terminator);
-
-		Object.assign(wrapper, {
-			events: {},
-			on,
-			off,
-			trigger,
-			listenTo,
-			stopListening
-		});
-	};
-})();
+	return this;
+};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MODEL
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-jmvc.isValidModel = reference => {
-	if (reference == null || typeof reference !== 'object' || jmvc.isValidView(reference)) {
-		return false;
-	}
+(() => {
+	function setModelProperty(instance, property) {
+		const value = instance.context[property];
+		const jvalue = value instanceof Jmvc.Model
+			? value.retain()
+			: value && typeof value === 'object'
+				? Array.isArray(value)
+					? new Jmvc.Model.Collection(value)
+					: new Jmvc.Model(value)
+				: false;
 
-	return true;
-};
-
-jmvc.factories.model = (() => {
-	const unmapOldValue = (wrapper, key) => {
-		const value = wrapper.beforeChange[key];
-		if (jmvc.isValidModel(value) && !(value in wrapper.reference)) {
-			const jvalue = wrapper.relatedMap.get(value);
-			if (jvalue) {
-				wrapper.stopListening(jvalue, jmvc.eventEnum.CHANGE);
-				wrapper.relatedMap.delete(value);
-			}
-		}
-	};
-
-	const mapNewValue = (wrapper, key) => {
-		const value = wrapper.reference[key];
-		if (jmvc.isValidModel(value) && !(wrapper.beforeChange && value in wrapper.beforeChange)) {
-			const jvalue = jmvc(value);
-			wrapper.listenTo(jvalue, jmvc.eventEnum.CHANGE, () => {
-				wrapper.trigger(`${jmvc.eventEnum.INDIRECT_CHANGE}:${key}`);
-				wrapper.trigger(jmvc.eventEnum.INDIRECT_CHANGE);
+		if (jvalue) {
+			instance.models[property] = jvalue;
+			instance.listenTo(jvalue, 'change', function () {
+				instance.trigger('change');
 			});
-			wrapper.relatedMap.set(value, jvalue);
 		}
-	};
+	}
 
-	const mapValues = (wrapper, key) => {
-		if (key) {
-			if (wrapper.beforeChange) {
-				unmapOldValue(wrapper, key);
+	function unsetModelProperty(instance, property) {
+		if (property in instance.models) {
+			instance.stopListeningTo(instance.models[property].release(), 'change');
+			delete instance.models[property];
+		}
+	}
+
+	Jmvc.Model = function (context = {}, callback) {
+		if (!(this instanceof Jmvc.Model)) {
+			return new Jmvc.Model(context);
+		}
+
+		Jmvc.call(this, context, () => {
+			this.models = {};
+
+			for (const property in this.context) {
+				setModelProperty(this, property);
 			}
 
-			mapNewValue(wrapper, key);
+			if (callback) {
+				callback.call(this);
+			}
+		});
+	};
+
+	Jmvc.Model.prototype = Object.create(Jmvc.prototype);
+	Jmvc.Model.prototype.constructor = Jmvc.Model;
+
+	Jmvc.Model.prototype.terminate = function () {
+		for (const property in this.models) {
+			unsetModelProperty(this, property);
+		}
+
+		return Jmvc.prototype.terminate.call(this);
+	};
+
+	Jmvc.Model.prototype.get = function (property) {
+		const value = this.context[property];
+		if (property in this.models) {
+			return this.models[property];
+		}
+
+		return value;
+	};
+
+	Jmvc.Model.prototype.set = function (property, value) {
+		unsetModelProperty(this, property);
+
+		if (value === undefined) {
+			delete this.context[property];
 		} else {
-			if (wrapper.beforeChange) {
-				for (const key in wrapper.beforeChange) {
-					unmapOldValue(wrapper, key);
-				}
-			}
-
-			for (const key in wrapper.reference) {
-				mapNewValue(wrapper, key);
-			}
+			this.context[property] = value;
 		}
-	};
 
-	const initializer = wrapper => {
-		mapValues(wrapper);
-	};
+		setModelProperty(this, property);
 
-	function get(name) {
-		return this.reference[name];
-	}
-
-	function getJmvc(name) {
-		return this.relatedMap.get(this.get(name));
-	}
-
-	function set(name, value) {
-		if (this.reference[name] !== value) {
-			this.beforeChange = { ...this.reference };
-
-			if (value === undefined) {
-				delete this.reference[name];
-			} else {
-				this.reference[name] = value;
-			}
-
-			mapValues(this, name);
-
-			this.trigger(`${jmvc.eventEnum.CHANGE}:${name}`);
-			this.trigger(jmvc.eventEnum.CHANGE);
-		}
+		this.trigger(`change:${property}`);
+		this.trigger('change');
 
 		return this;
-	}
-
-	function unset(name) {
-		return this.set(name);
-	}
-
-	const mutators = ['copyWithin', 'fill', 'pop', 'push', 'reverse', 'shift', 'sort', 'splice']
-		.reduce((acc, cur) => {
-			acc[cur] = function (...args) {
-				this.beforeChange = [...this.reference];
-
-				Array.prototype[cur].call(this.reference, ...args);
-
-				mapValues(this);
-
-				if (this.beforeChange.length !== this.reference.length || !this.reference.every((cur, index) => cur === this.beforeChange[index])) {
-					this.trigger(jmvc.eventEnum.CHANGE);
-				}
-
-				return this;
-			};
-
-			return acc;
-		}, {});
-
-	const nonMutators = ['concat', 'entries', 'every', 'filter', 'find', 'findIndex', 'forEach', 'includes', 'indexOf'
-		, 'join', 'keys', 'lastIndexOf', 'map', 'reduce', 'reduceRight', 'slice', 'some', 'toLocaleString', 'toString'
-		, 'unshift', 'values']
-		.reduce((acc, cur) => {
-			acc[cur] = function (...args) {
-				return Array.prototype[cur].call(this.reference, ...args);
-			};
-
-			return acc;
-		}, {});
-
-	return wrapper => {
-		if (!jmvc.isValidModel(wrapper.reference)) {
-			return;
-		}
-
-		wrapper.initializers.push(initializer);
-
-		Object.assign(wrapper, {
-			isJmvcModel: true,
-			beforeChange: null,
-			relatedMap: new Map(),
-			get,
-			getJmvc,
-			set,
-			unset
-		});
-
-		if (Array.isArray(wrapper.reference)) {
-			Object.assign(wrapper, mutators, nonMutators, {
-				isJmvcCollection: true,
-			});
-		}
 	};
+
+	Jmvc.Model.prototype.unset = function (property) {
+		return this.set(property);
+	};
+
+	(() => {
+		function mutateWith(instance, mutator, ...args) {
+			Array.prototype[mutator].call(instance.context, ...args);
+
+			const cleanModels = {};
+			for (const property in instance.models) {
+				const model = instance.models[property];
+				if (!(model in instance.context)) {
+					unsetModelProperty(instance, property);
+				} else {
+					cleanModels[instance.context.indexOf(model)] = model;
+				}
+			}
+
+			instance.models = cleanModels;
+
+			for (let index = 0, length = instance.context.length; index < length; index++) {
+				if (!(instance.context[index] in instance.models)) {
+					setModelProperty(instance.context, index);
+				}
+			}
+
+			return instance.trigger('change');
+		}
+
+		Jmvc.Model.Collection = function (context = [], callback) {
+			if (!(this instanceof Jmvc.Model.Collection)) {
+				return new Jmvc.Model.Collection(context);
+			}
+
+			Jmvc.Model.call(this, context, callback);
+		};
+
+		Jmvc.Model.Collection.prototype = Object.create(Jmvc.Model.prototype);
+		Jmvc.Model.Collection.prototype.constructor = Jmvc.Model.Collection;
+
+		Jmvc.Model.Collection.prototype.copyWithin = function (...args) {
+			return mutateWith(this, 'copyWithin', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.fill = function (...args) {
+			return mutateWith(this, 'fill', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.pop = function (...args) {
+			return mutateWith(this, 'pop', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.push = function (...args) {
+			return mutateWith(this, 'push', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.reverse = function (...args) {
+			return mutateWith(this, 'reverse', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.shift = function (...args) {
+			return mutateWith(this, 'shift', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.sort = function (...args) {
+			return mutateWith(this, 'sort', ...args);
+		};
+
+		Jmvc.Model.Collection.prototype.splice = function (...args) {
+			return mutateWith(this, 'splice', ...args);
+		};
+	})();
 })();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // VIEW
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-jmvc.isValidView = reference => {
-	if (!(reference instanceof HTMLElement)) {
-		return false;
-	}
-
-	return true;
-};
-
-jmvc.isView = wrapper => {
-	if (Object.prototype.hasOwnProperty.call(wrapper, 'isJmvcView') && wrapper.isJmvcView) {
-		return true;
-	}
-
-	return false;
-};
-
-jmvc.factories.view = (() => {
-	function initializer(wrapper) {
-		if (wrapper.reference.hasAttributes()) {
-			const attributes = {};
-			const attributesList = wrapper.reference.attributes;
-			const length = attributesList.length;
-
-			if (length > 0) {
-				for (let index = 0; index < length; index++) {
-					const { name, value } = attributesList[index];
-					attributes[name] = value;
-				}
-
-				wrapper.setAttributes(attributes);
-			}
-		}
-
-		if (wrapper.reference.hasChildNodes()) {
-			const children = [];
-			const childNodes = wrapper.reference.childNodes;
-			const length = childNodes.length;
-
-			if (length > 0) {
-				for (let index = 0; index < length; index++) {
-					children.push(childNodes[index]);
-				}
-
-				wrapper.setChildren(children);
-			}
+(() => {
+	function cleanup(instance) {
+		if (instance.model) {
+			instance.stopListeningTo(instance.model, 'change');
+			instance.model.release();
+			instance.model = null;
 		}
 	}
 
-	function terminator(wrapper) {
-		const terminate = children => {
-			if (!Array.isArray(children)) {
-				children = [children];
-			}
+	Jmvc.View = function (element, callback) {
+		if (!(this instanceof Jmvc.View)) {
+			return new Jmvc.View(element);
+		}
 
-			const length = children.length;
-			for (let index = 0; index < length; index++) {
-				const child = children[index];
-				if (Array.isArray(child)) {
-					terminate(child);
-				} else if (jmvc.isWrapper(child)) {
-					child.terminate();
+		element = typeof element === 'string' ? document.createElement(element) : element;
+		Jmvc.call(this, element, () => {
+			this.attributes = {};
+			if (this.context.hasAttributes()) {
+				for (let index = 0, length = this.context.attributes.length; index < length; index++) {
+					const { name, value } = this.context.attributes[index];
+					this.attributes[name] = value;
 				}
 			}
-		};
 
-		terminate(wrapper.children);
-	}
+			this.children = [];
+			if (this.context.hasChildNodes()) {
+				for (let index = 0, length = this.context.childNodes.length; index < length; index++) {
+					this.children.push(this.context.childNodes[index]);
+				}
+			}
 
-	function setAttributes(attributes) {
+			this.setModel();
+
+			if (callback) {
+				callback.call(this);
+			}
+		});
+	};
+
+	Jmvc.View.prototype = Object.create(Jmvc.prototype);
+	Jmvc.View.prototype.constructor = Jmvc.View;
+
+	Jmvc.View.prototype.terminate = function () {
+		cleanup(this);
+
+		for (let index = 0, length = this.children; index < length; index++) {
+			if (this.children[index] instanceof Jmvc.View) {
+				this.children[index].release();
+			}
+		}
+
+		return Jmvc.prototype.terminate.call(this);
+	};
+
+	Jmvc.View.prototype.setAttributes = function (attributes) {
 		this.attributes = attributes;
 
-		return this;
-	}
+		this.trigger('change:attributes');
+		this.trigger('change');
 
-	function setChildren(children) {
+		return this;
+	};
+
+	Jmvc.View.prototype.setChildren = function (children) {
+		for (let index = 0, length = this.children; index < length; index++) {
+			if (this.children[index] instanceof Jmvc.View) {
+				this.children[index].release();
+			}
+		}
+
 		this.children = children;
 
-		return this;
-	}
+		this.trigger('change:children');
+		this.trigger('change');
 
-	function renderAttributes(callback) {
-		const finalAttributes = {};
+		return this;
+	};
+
+	Jmvc.View.prototype.renderAttributes = function (callback) {
+		const processedAttributes = {};
 
 		const process = (attributes, key) => {
-			const promises = [];
+			if (attributes == null) {
+				return [];
+			}
 
 			if (typeof attributes === 'function') {
-				promises.push(...process(attributes.call(this), key));
-			} else if (attributes instanceof Promise) {
-				promises.push(attributes.then(attributes => Promise.all(process(attributes, key))));
-			} else if (attributes && typeof attributes === 'object') {
+				return process(attributes.call(this), key);
+			}
+
+			if (attributes instanceof Promise) {
+				return [
+					attributes.then((attributes) => process(attributes, key))
+				];
+			}
+
+			if (typeof attributes === 'object') {
+				const promises = [];
 				for (const key in attributes) {
 					promises.push(...process(attributes[key], key));
 				}
-			} else if (key != null && attributes != null) {
-				finalAttributes[key] = attributes;
-				this.reference.setAttribute(key, attributes);
+				return promises;
 			}
 
-			return promises;
+			if (key != null) {
+				processedAttributes[key] = attributes;
+				this.context.setAttribute(key, attributes);
+				return [];
+			}
+
+			return [];
 		};
 
 		const promises = process(this.attributes);
@@ -493,23 +435,20 @@ jmvc.factories.view = (() => {
 		const cleanup = () => {
 			const currentAttributes = {};
 
-			const domAttributes = this.reference.attributes;
-			for (let index = 0, length = domAttributes.length; index < length; index++) {
-				const { name, value } = domAttributes[index];
+			for (let index = 0, length = this.context.attributes.length; index < length; index++) {
+				const { name, value } = this.context.attributes[index];
 				currentAttributes[name] = value;
 			}
 
 			for (const key in currentAttributes) {
-				if (finalAttributes[key] == null) {
-					this.reference.removeAttribute(key);
+				if (!(key in processedAttributes)) {
+					this.context.removeAttribute(key);
 				}
 			}
 		};
 
 		if (promises.length > 0) {
-			Promise.all(promises).then(() => {
-				cleanup();
-			});
+			Promise.all(promises).then(() => cleanup());
 		} else {
 			cleanup();
 		}
@@ -518,54 +457,71 @@ jmvc.factories.view = (() => {
 			callback(promises);
 		}
 
-		this.trigger(jmvc.eventEnum.RENDER_ATTRIBUTES, promises);
+		return this.trigger('render:attributes', promises);
+	};
 
-		return this;
-	}
-
-	function renderChildren(callback) {
-		while (this.reference.firstChild) {
-			this.reference.removeChild(this.reference.lastChild);
+	Jmvc.View.prototype.renderChildren = function (callback) {
+		while (this.context.firstChild) {
+			this.context.removeChild(this.context.lastChild);
 		}
 
 		const insertChild = (child, placeholder) => {
 			if (placeholder) {
-				this.reference.insertBefore(child, placeholder);
+				this.context.insertBefore(child, placeholder);
 			} else {
-				this.reference.append(child);
+				this.context.append(child);
 			}
 		};
 
 		const process = (children, placeholder) => {
-			const promises = [];
-
 			if (children == null) {
-				// DO NOTHING
-			} else if (typeof children === 'boolean' || typeof children === 'number') {
-				process(String(children), placeholder);
-			} else if (typeof children === 'string') {
-				insertChild(document.createTextNode(children), placeholder);
-			} else if (children instanceof Node) {
-				insertChild(children, placeholder);
-			} else if (jmvc.isView(children)) {
-				children.render(renderPromises => promises.push(...renderPromises));
-				process(children.reference, placeholder);
-			} else if (Array.isArray(children)) {
-				const length = children.length;
-				for (let index = 0; index < length; index++) {
-					promises.push(...process(children[index]));
-				}
-			} else if (typeof children === 'function') {
-				promises.push(...process(children.call(this), placeholder));
-			} else if (children instanceof Promise) {
-				const newPlaceholder = document.createElement('span');
-				insertChild(newPlaceholder, placeholder);
-				promises.push(children
-					.then(children => Promise.all(process(children, newPlaceholder)))
-					.then(() => this.reference.removeChild(newPlaceholder)));
+				return [];
 			}
 
-			return promises;
+			if (typeof children === 'boolean' || typeof children === 'number') {
+				return process(String(children), placeholder);
+			}
+
+			if (typeof children === 'string') {
+				insertChild(document.createTextNode(children), placeholder);
+				return [];
+			}
+
+			if (children instanceof Node) {
+				insertChild(children, placeholder);
+				return [];
+			}
+
+			if (children instanceof Jmvc.View) {
+				const promises = [];
+				children.render((renderPromises) => promises.push(...renderPromises));
+				promises.push(...process(children.context, placeholder));
+				return promises;
+			}
+
+			if (Array.isArray(children)) {
+				const promises = [];
+				for (let index = 0, length = children.length; index < length; index++) {
+					promises.push(...process(children[index], placeholder));
+				}
+				return promises;
+			}
+
+			if (typeof children === 'function') {
+				return process(children.call(this), placeholder);
+			}
+
+			if (children instanceof Promise) {
+				const newPlaceholder = document.createElement('span');
+				insertChild(newPlaceholder, placeholder);
+				return [
+					children
+						.then((children) => Promise.all(process(children, newPlaceholder)))
+						.then(() => this.context.removeChild(newPlaceholder))
+				];
+			}
+
+			return [];
 		};
 
 		const promises = process(this.children);
@@ -574,87 +530,58 @@ jmvc.factories.view = (() => {
 			callback(promises);
 		}
 
-		this.trigger(jmvc.eventEnum.RENDER_CHILDREN, promises);
+		return this.trigger('render:children', promises);
+	};
 
-		return this;
-	}
-
-	function render(callback) {
+	Jmvc.View.prototype.render = function (callback) {
 		const promises = [];
 
-		this.renderAttributes(renderPromises => promises.push(...renderPromises));
-		this.renderChildren(renderPromises => promises.push(...renderPromises));
+		this.renderAttributes((renderPromises) => promises.push(...renderPromises));
+		this.renderChildren((renderPromises) => promises.push(...renderPromises));
 
 		if (callback) {
 			callback(promises);
 		}
 
-		this.trigger(jmvc.eventEnum.RENDER, promises);
+		return this.trigger('render', promises);
+	};
 
-		return this;
-	}
-
-	function appendTo(target) {
-		if (target.isJmvcWrapper) {
-			target = target.reference;
+	Jmvc.View.prototype.appendTo = function (target) {
+		if (target instanceof Jmvc.View) {
+			target = target.context;
 		}
 
-		target.append(this.reference);
+		target.append(this.context);
 
 		return this;
-	}
+	};
 
-	return wrapper => {
-		if (!jmvc.isValidView(wrapper.reference)) {
-			return;
-		}
+	Jmvc.View.prototype.setModel = function (jmodel = new Jmvc.Model({})) {
+		cleanup(this);
 
-		wrapper.initializers.push(initializer);
-		wrapper.terminators.push(terminator);
+		this.model = jmodel;
+		this.listenTo(this.model, 'change', () => this.render());
 
-		Object.assign(wrapper, {
-			isJmvcView: true,
-			attributes: {},
-			children: [],
-			setAttributes,
-			setChildren,
-			renderAttributes,
-			renderChildren,
-			render,
-			appendTo
-		});
+		return this;
 	};
 })();
-
-jmvc.view = tag => {
-	return jmvc(document.createElement(tag));
-};
-
-jmvc.text = (...args) => {
-	return document.createTextNode(args.join(''));
-};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // STYLE
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-jmvc.factories.style = (() => {
-	function style(jmodel = jmvc({})) {
-		jmodel = jmvc(jmodel)
-			.on(jmvc.eventEnum.CHANGE, () => {
-				this.render();
-			})
-			.on(jmvc.eventEnum.INDIRECT_CHANGE, () => {
-				this.render();
-			});
+(() => {
+	Jmvc.View.Style = function () {
+		if (!(this instanceof Jmvc.View.Style)) {
+			return new Jmvc.View.Style();
+		}
 
-		this.setChildren([
-			() => {
-				const styles = jmodel.reference;
-				return jmvc.text(...Object.keys(styles).reduce((acc, cur) => {
+		Jmvc.View.call(this, 'style', () => {
+			this.setChildren(() => {
+				return Object.keys(this.model.context).reduce((acc, cur) => {
 					acc.push(cur, '{');
 
-					const style = styles[cur];
+					const style = this.model.context[cur];
 					for (const key in style) {
 						acc.push(`${key}:${style[key]};`);
 					}
@@ -662,55 +589,13 @@ jmvc.factories.style = (() => {
 					acc.push('}');
 
 					return acc;
-				}, []));
-			}
-		]);
-
-		return this;
-	}
-
-	return wrapper => {
-		if (!jmvc.isValidView(wrapper.reference) || !(wrapper.reference instanceof HTMLStyleElement)) {
-			return;
-		}
-
-		Object.assign(wrapper, {
-			style
+				}, []);
+			}).appendTo(document.head);
 		});
 	};
+
+	Jmvc.View.Style.prototype = Object.create(Jmvc.View.prototype);
+	Jmvc.View.Style.prototype.constructor = Jmvc.View.Style;
 })();
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// GLOBAL
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-jmvc.global = (() => {
-	const map = new Map();
-
-	const global = reference => {
-		let wrapper;
-		if (jmvc.isWrapper(reference)) {
-			wrapper = reference;
-		} else {
-			wrapper = map.get(reference) || jmvc(reference);
-		}
-
-		if (!map.has(wrapper.reference)) {
-			map.set(wrapper.reference, wrapper);
-		}
-
-		return wrapper;
-	};
-
-	global.remove = reference => {
-		if (reference) {
-			if (map.has(reference)) {
-				map.delete(reference);
-			}
-		} else {
-			map.clear();
-		}
-	};
-
-	return global;
-})();
+/* exported Jmvc */
