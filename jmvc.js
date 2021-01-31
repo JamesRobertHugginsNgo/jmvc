@@ -42,25 +42,32 @@ Jmvc.prototype.callback = function (callback) {
 };
 
 Jmvc.prototype.on = function (event, callback, once = false, owner = this) {
-	if (!this.events[event]) {
-		this.events[event] = {
-			callbacks: []
-		};
-
-		if (this.context instanceof EventTarget) {
-			this.events[event].listener = {
-				handleEvent: (...args) => {
-					this.trigger(event, ...args);
-				}
+	const process = (event) => {
+		if (!this.events[event]) {
+			this.events[event] = {
+				callbacks: []
 			};
-			this.context.addEventListener(event, this.events[event].listener);
+
+			if (this.context instanceof EventTarget) {
+				this.events[event].listener = {
+					handleEvent: (...args) => {
+						this.trigger(event, ...args);
+					}
+				};
+				this.context.addEventListener(event, this.events[event].listener);
+			}
 		}
-	}
 
-	this.events[event].callbacks.push({ event, callback, once, owner });
+		this.events[event].callbacks.push({ event, callback, once, owner });
 
-	if (owner !== this && owner.emitters.indexOf(this) === -1) {
-		owner.emitters.push(this);
+		if (owner !== this && owner.emitters.indexOf(this) === -1) {
+			owner.emitters.push(this);
+		}
+	};
+
+	const events = event.split(' ').filter((event) => event);
+	for (let index = 0, length = events.length; index < length; index++) {
+		process(events[index]);
 	}
 
 	return this;
@@ -99,8 +106,9 @@ Jmvc.prototype.off = function (eventArg, callbackArg, onceArg, ownerArg) {
 	};
 
 	if (eventArg != null) {
-		if (this.events[eventArg]) {
-			process(eventArg);
+		const events = eventArg.split(' ').filter((event) => event && this.events[event]);
+		for (let index = 0, length = events.length; index < length; index++) {
+			process(events[index]);
 		}
 	} else {
 		for (const event in this.events) {
@@ -124,14 +132,19 @@ Jmvc.prototype.off = function (eventArg, callbackArg, onceArg, ownerArg) {
 };
 
 Jmvc.prototype.trigger = function (event, ...args) {
-	if (!this.events[event]) {
-		return this;
+	const callbacks = [];
+
+	const events = event.split(' ').filter((event) => event && this.events[event]);
+	for (let eventsIndex = 0, length = events.length; eventsIndex < length; eventsIndex++) {
+		callbacks.push(...this.events[events[eventsIndex]].callbacks);
 	}
 
-	const callbacks = [...this.events[event].callbacks];
 	for (let index = 0, length = callbacks.length; index < length; index++) {
-		const { callback, owner } = callbacks[index];
-		callback.call(owner, ...args);
+		const callbackItem = callbacks[index];
+		if (index === callbacks.indexOf(callbackItem)) {
+			const { callback, owner } = callbackItem;
+			callback.call(owner, ...args);
+		}
 	}
 
 	return this.off(event, null, true);
@@ -261,7 +274,7 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 
 			for (let index = 0, length = instance.context.length; index < length; index++) {
 				if (!(instance.context[index] in instance.models)) {
-					setModelProperty(instance.context, index);
+					setModelProperty(instance, index);
 				}
 			}
 
@@ -556,7 +569,7 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 		return this;
 	};
 
-	Jmvc.View.prototype.setModel = function (jmodel = new Jmvc.Model({})) {
+	Jmvc.View.prototype.setModel = function (jmodel = new Jmvc.Model()) {
 		cleanup(this);
 
 		this.model = jmodel;

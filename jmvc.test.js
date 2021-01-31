@@ -9,7 +9,7 @@
 		initialized = true;
 
 		new Jmvc.View.Style()
-			.setModel(new Jmvc({
+			.setModel(new Jmvc.Model({
 				'div.test': {
 					'background-color': '#dff9fb',
 					'border': '1px dashed #666666',

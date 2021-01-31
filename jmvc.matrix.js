@@ -1,17 +1,15 @@
-/* global jmvc */
+/* global Jmvc */
 
-jmvc.factories.matrix = (() => {
+(() => {
 	let initialized = false;
-
 	const initialize = () => {
 		if (initialized) {
 			return;
 		}
-
 		initialized = true;
 
-		jmvc.view('style')
-			.style(jmvc({
+		new Jmvc.View.Style()
+			.setModel(new Jmvc.Model({
 				'table.matrix': {
 					'border-spacing': 0,
 					'border-collapse': 'collapse',
@@ -23,45 +21,39 @@ jmvc.factories.matrix = (() => {
 				}
 			}))
 			.render()
-			.appendTo(document.head);
+			.release();
 	};
 
-	function matrix(jCollection = jmvc([])) {
-		initialize();
-
-		jCollection = jmvc(jCollection)
-			.on(jmvc.eventEnum.CHANGE, () => {
-				this.render();
-			})
-			.on(jmvc.eventEnum.INDIRECT_CHANGE, () => {
-				this.render();
-			});
-
-		this.setAttributes({ 'class': 'matrix' });
-
-		this.setChildren([
-			jmvc.view('tbody')
-				.setChildren(function () {
-					return jCollection.map((value) => {
-						return jmvc.view('tr')
-							.setChildren(value.map(value => {
-								return jmvc.view('td')
-									.setChildren([value]);
-							}));
-					});
-				})
-		]);
-
-		return this;
-	}
-
-	return wrapper => {
-		if (!jmvc.isValidView(wrapper.reference) || !(wrapper.reference instanceof HTMLTableElement)) {
-			return;
+	Jmvc.View.Matrix = function () {
+		if (!(this instanceof Jmvc.View.Matrix)) {
+			return new Jmvc.View.Matrix();
 		}
 
-		Object.assign(wrapper, {
-			matrix
+		Jmvc.View.call(this, 'table', () => {
+			let rows = [];
+			this
+				.setAttributes({ 'class': 'matrix' })
+				.setChildren([
+					new Jmvc.View('tbody')
+						.setChildren(() => {
+							for (let index = 0, length = rows.length; index < length; index++) {
+								rows[index].release();
+							}
+
+							return rows = this.model.context.map((value) => new Jmvc.View('tr')
+								.setChildren(value.map((value) => new Jmvc.View('td')
+									.setChildren([value]))));
+						})
+				]);
+
+			initialize();
 		});
+	};
+
+	Jmvc.View.Matrix.prototype = Object.create(Jmvc.View.prototype);
+	Jmvc.View.Matrix.prototype.constructor = Jmvc.View.Matrix;
+
+	Jmvc.View.Matrix.prototype.setModel = function (jcollection = new Jmvc.Model.Collection()) {
+		return Jmvc.View.prototype.setModel.call(this, jcollection);
 	};
 })();

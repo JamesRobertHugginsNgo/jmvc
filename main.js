@@ -15,16 +15,16 @@ Jmvc.View.Test()
 
 // console.log(view);
 
-// const jCollection = jmvc([
-// 	['DATA 0.0', 'DATA 0.1', 'DATA 0.2'],
-// 	['DATA 1.0', 'DATA 1.1', 'DATA 1.2'],
-// 	['DATA 2.0', 'DATA 2.1', 'DATA 2.2']
-// ]);
+const jcollection = Jmvc.Model.Collection([
+	['DATA 0.0', 'DATA 0.1', 'DATA 0.2'],
+	['DATA 1.0', 'DATA 1.1', 'DATA 1.2'],
+	['DATA 2.0', 'DATA 2.1', 'DATA 2.2']
+]);
 
-// jmvc.view('table')
-// 	.matrix(jCollection)
-// 	.appendTo(app)
-// 	.render();
+Jmvc.View.Matrix()
+	.setModel(jcollection)
+	.appendTo(app)
+	.render();
 
 // const obj1 = {};
 
