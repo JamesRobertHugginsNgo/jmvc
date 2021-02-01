@@ -32,8 +32,6 @@
 			return new Jmvc.View.Test(jmodel, callback);
 		}
 
-		console.log('JMVC VIEW TEST');
-
 		Jmvc.View.call(this, 'div', jmodel, () => {
 			this
 				.setAttributes({

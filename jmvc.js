@@ -570,8 +570,6 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 	};
 
 	Jmvc.View.prototype.setModel = function (jmodel = new Jmvc.Model()) {
-		console.log('SET MODEL', jmodel);
-
 		cleanup(this);
 
 		this.model = jmodel;
