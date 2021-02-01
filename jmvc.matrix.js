@@ -13,6 +13,7 @@
 				'table.matrix': {
 					'border-spacing': 0,
 					'border-collapse': 'collapse',
+					'margin': '1.5rem 0',
 					'width': '100%'
 				},
 				'table.matrix td, table.matrix th': {
