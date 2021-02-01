@@ -8,29 +8,28 @@
 		}
 		initialized = true;
 
-		new Jmvc.View.Style()
-			.setModel(new Jmvc.Model({
-				'table.matrix': {
-					'border-spacing': 0,
-					'border-collapse': 'collapse',
-					'margin': '1.5rem 0',
-					'width': '100%'
-				},
-				'table.matrix td, table.matrix th': {
-					'border': '1px solid #cccccc',
-					'padding': '0.5em 1rem'
-				}
-			}))
+		new Jmvc.View.Style(new Jmvc.Model({
+			'table.matrix': {
+				'border-spacing': 0,
+				'border-collapse': 'collapse',
+				'margin': '1.5rem 0',
+				'width': '100%'
+			},
+			'table.matrix td, table.matrix th': {
+				'border': '1px solid #cccccc',
+				'padding': '0.5em 1rem'
+			}
+		}))
 			.render()
 			.release();
 	};
 
-	Jmvc.View.Matrix = function () {
+	Jmvc.View.Matrix = function (jmodel, callback) {
 		if (!(this instanceof Jmvc.View.Matrix)) {
-			return new Jmvc.View.Matrix();
+			return new Jmvc.View.Matrix(jmodel, callback);
 		}
 
-		Jmvc.View.call(this, 'table', () => {
+		Jmvc.View.call(this, 'table', jmodel, () => {
 			let rows = [];
 			this
 				.setAttributes({ 'class': 'matrix' })
@@ -48,13 +47,17 @@
 				]);
 
 			initialize();
+
+			if (callback) {
+				callback.call(this);
+			}
 		});
 	};
 
 	Jmvc.View.Matrix.prototype = Object.create(Jmvc.View.prototype);
 	Jmvc.View.Matrix.prototype.constructor = Jmvc.View.Matrix;
 
-	Jmvc.View.Matrix.prototype.setModel = function (jcollection = new Jmvc.Model.Collection()) {
-		return Jmvc.View.prototype.setModel.call(this, jcollection);
+	Jmvc.View.Matrix.prototype.setModel = function (jmodel = new Jmvc.Model.Collection()) {
+		return Jmvc.View.prototype.setModel.call(this, jmodel);
 	};
 })();

@@ -339,9 +339,9 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 		}
 	}
 
-	Jmvc.View = function (element, callback) {
+	Jmvc.View = function (element, jmodel, callback) {
 		if (!(this instanceof Jmvc.View)) {
-			return new Jmvc.View(element);
+			return new Jmvc.View(element, jmodel, callback);
 		}
 
 		element = typeof element === 'string' ? document.createElement(element) : element;
@@ -361,7 +361,7 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 				}
 			}
 
-			this.setModel();
+			this.setModel(jmodel);
 
 			if (callback) {
 				callback.call(this);
@@ -570,6 +570,8 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 	};
 
 	Jmvc.View.prototype.setModel = function (jmodel = new Jmvc.Model()) {
+		console.log('SET MODEL', jmodel);
+
 		cleanup(this);
 
 		this.model = jmodel;
@@ -584,12 +586,12 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 (() => {
-	Jmvc.View.Style = function () {
+	Jmvc.View.Style = function (jmodel, callback) {
 		if (!(this instanceof Jmvc.View.Style)) {
-			return new Jmvc.View.Style();
+			return new Jmvc.View.Style(jmodel, callback);
 		}
 
-		Jmvc.View.call(this, 'style', () => {
+		Jmvc.View.call(this, 'style', jmodel, () => {
 			this.setChildren(() => {
 				return Object.keys(this.model.context).reduce((acc, cur) => {
 					acc.push(cur, '{');
@@ -604,6 +606,10 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 					return acc;
 				}, []);
 			}).appendTo(document.head);
+
+			if (callback) {
+				callback.call(this);
+			}
 		});
 	};
 
