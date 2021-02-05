@@ -12,7 +12,17 @@ const Jmvc = function (context, callback) {
 		callback.call(this);
 	}
 
+	return this.initialize();
+};
+
+Jmvc.prototype.initialize = function () {
 	return this.trigger('initialize');
+};
+
+Jmvc.prototype.terminate = function () {
+	this.off();
+	this.stopListeningTo();
+	return this.trigger('terminate');
 };
 
 Jmvc.prototype.retain = function () {
@@ -27,13 +37,6 @@ Jmvc.prototype.release = function () {
 
 	this.retainCount--;
 	return this.trigger('release');
-};
-
-Jmvc.prototype.terminate = function () {
-	this.off();
-	this.stopListeningTo();
-
-	return this.trigger('terminate');
 };
 
 Jmvc.prototype.callback = function (callback) {
@@ -292,37 +295,13 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 		Jmvc.Model.Collection.prototype = Object.create(Jmvc.Model.prototype);
 		Jmvc.Model.Collection.prototype.constructor = Jmvc.Model.Collection;
 
-		Jmvc.Model.Collection.prototype.copyWithin = function (...args) {
-			return mutateWith(this, 'copyWithin', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.fill = function (...args) {
-			return mutateWith(this, 'fill', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.pop = function (...args) {
-			return mutateWith(this, 'pop', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.push = function (...args) {
-			return mutateWith(this, 'push', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.reverse = function (...args) {
-			return mutateWith(this, 'reverse', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.shift = function (...args) {
-			return mutateWith(this, 'shift', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.sort = function (...args) {
-			return mutateWith(this, 'sort', ...args);
-		};
-
-		Jmvc.Model.Collection.prototype.splice = function (...args) {
-			return mutateWith(this, 'splice', ...args);
-		};
+		const mutators = ['copyWithin', 'fill', 'pop', 'push', 'reverse', 'shift', 'sort', 'splice'];
+		for (let index = 0, length = mutators.length; index < length; index++) {
+			const mutator = mutators[index];
+			Jmvc.Model.Collection.prototype[mutator] = function (...args) {
+				return mutateWith(this, mutator, ...args);
+			};
+		}
 	})();
 })();
 
@@ -330,38 +309,255 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 // VIEW
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+Jmvc.View = function (element, callback) {
+	if (!(this instanceof Jmvc.View)) {
+		return new Jmvc.View(element, callback);
+	}
+
+	element = typeof element === 'string' ? document.createElement(element) : element;
+	Jmvc.call(this, element, () => {
+		this.attributes = {};
+		if (this.context.hasAttributes()) {
+			for (let index = 0, length = this.context.attributes.length; index < length; index++) {
+				const { name, value } = this.context.attributes[index];
+				this.attributes[name] = value;
+			}
+		}
+
+		this.children = [];
+		if (this.context.hasChildNodes()) {
+			for (let index = 0, length = this.context.childNodes.length; index < length; index++) {
+				this.children.push(this.context.childNodes[index]);
+			}
+		}
+
+		if (callback) {
+			callback.call(this);
+		}
+	});
+};
+
+Jmvc.View.prototype = Object.create(Jmvc.prototype);
+Jmvc.View.prototype.constructor = Jmvc.View;
+
+Jmvc.View.prototype.terminate = function () {
+	for (let index = 0, length = this.children; index < length; index++) {
+		if (this.children[index] instanceof Jmvc.View) {
+			this.children[index].release();
+		}
+	}
+
+	return Jmvc.prototype.terminate.call(this);
+};
+
+Jmvc.View.prototype.setAttributes = function (attributes) {
+	this.attributes = attributes;
+
+	this.trigger('change:attributes');
+	this.trigger('change');
+
+	return this;
+};
+
+Jmvc.View.prototype.setChildren = function (children) {
+	for (let index = 0, length = this.children; index < length; index++) {
+		if (this.children[index] instanceof Jmvc.View) {
+			this.children[index].release();
+		}
+	}
+
+	this.children = children;
+
+	this.trigger('change:children');
+	this.trigger('change');
+
+	return this;
+};
+
+Jmvc.View.prototype.renderAttributes = function (callback) {
+	const processedAttributes = {};
+
+	const process = (attributes, key) => {
+		if (attributes == null) {
+			return [];
+		}
+
+		if (typeof attributes === 'function') {
+			return process(attributes.call(this), key);
+		}
+
+		if (attributes instanceof Promise) {
+			return [
+				attributes.then((attributes) => process(attributes, key))
+			];
+		}
+
+		if (typeof attributes === 'object') {
+			const promises = [];
+			for (const key in attributes) {
+				promises.push(...process(attributes[key], key));
+			}
+			return promises;
+		}
+
+		if (key != null) {
+			processedAttributes[key] = attributes;
+			this.context.setAttribute(key, attributes);
+			return [];
+		}
+
+		return [];
+	};
+
+	const promises = process(this.attributes);
+
+	const cleanup = () => {
+		const currentAttributes = {};
+
+		for (let index = 0, length = this.context.attributes.length; index < length; index++) {
+			const { name, value } = this.context.attributes[index];
+			currentAttributes[name] = value;
+		}
+
+		for (const key in currentAttributes) {
+			if (!(key in processedAttributes)) {
+				this.context.removeAttribute(key);
+			}
+		}
+	};
+
+	if (promises.length > 0) {
+		Promise.all(promises).then(() => cleanup());
+	} else {
+		cleanup();
+	}
+
+	if (callback) {
+		callback(promises);
+	}
+
+	return this.trigger('render:attributes', promises);
+};
+
+Jmvc.View.prototype.renderChildren = function (callback) {
+	while (this.context.firstChild) {
+		this.context.removeChild(this.context.lastChild);
+	}
+
+	const insertChild = (child, placeholder) => {
+		if (placeholder) {
+			this.context.insertBefore(child, placeholder);
+		} else {
+			this.context.append(child);
+		}
+	};
+
+	const process = (children, placeholder) => {
+		if (children == null) {
+			return [];
+		}
+
+		if (typeof children === 'boolean' || typeof children === 'number') {
+			return process(String(children), placeholder);
+		}
+
+		if (typeof children === 'string') {
+			insertChild(document.createTextNode(children), placeholder);
+			return [];
+		}
+
+		if (children instanceof Node) {
+			insertChild(children, placeholder);
+			return [];
+		}
+
+		if (children instanceof Jmvc.View) {
+			const promises = [];
+			children.render((renderPromises) => promises.push(...renderPromises));
+			promises.push(...process(children.context, placeholder));
+			return promises;
+		}
+
+		if (Array.isArray(children)) {
+			const promises = [];
+			for (let index = 0, length = children.length; index < length; index++) {
+				promises.push(...process(children[index], placeholder));
+			}
+			return promises;
+		}
+
+		if (typeof children === 'function') {
+			return process(children.call(this), placeholder);
+		}
+
+		if (children instanceof Promise) {
+			const newPlaceholder = document.createElement('span');
+			insertChild(newPlaceholder, placeholder);
+			return [
+				children
+					.then((children) => Promise.all(process(children, newPlaceholder)))
+					.then(() => this.context.removeChild(newPlaceholder))
+			];
+		}
+
+		return [];
+	};
+
+	const promises = process(this.children);
+
+	if (callback) {
+		callback(promises);
+	}
+
+	return this.trigger('render:children', promises);
+};
+
+Jmvc.View.prototype.render = function (callback) {
+	const promises = [];
+
+	this.renderAttributes((renderPromises) => promises.push(...renderPromises));
+	this.renderChildren((renderPromises) => promises.push(...renderPromises));
+
+	if (callback) {
+		callback(promises);
+	}
+
+	return this.trigger('render', promises);
+};
+
+Jmvc.View.prototype.appendTo = function (target) {
+	if (target instanceof Jmvc.View) {
+		target = target.context;
+	}
+
+	target.append(this.context);
+
+	return this;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MODEL VIEW
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 (() => {
 	function cleanup(instance) {
 		if (instance.model) {
-			instance.stopListeningTo(instance.model, 'change');
+			instance.stopListeningTo(instance.model);
 			instance.model.release();
 			instance.model = null;
 		}
 	}
 
-	Jmvc.View = function (element, jmodel, callback) {
-		if (!(this instanceof Jmvc.View)) {
-			return new Jmvc.View(element, jmodel, callback);
+	Jmvc.View.ModelView = function (element, jmodel, callback) {
+		if (!(this instanceof Jmvc.View.ModelView)) {
+			return new Jmvc.View.ModelView(element, jmodel, callback);
 		}
 
-		element = typeof element === 'string' ? document.createElement(element) : element;
-		Jmvc.call(this, element, () => {
-			this.attributes = {};
-			if (this.context.hasAttributes()) {
-				for (let index = 0, length = this.context.attributes.length; index < length; index++) {
-					const { name, value } = this.context.attributes[index];
-					this.attributes[name] = value;
-				}
+		Jmvc.View.call(this, element, () => {
+			if (jmodel) {
+				this.setModel(jmodel);
 			}
-
-			this.children = [];
-			if (this.context.hasChildNodes()) {
-				for (let index = 0, length = this.context.childNodes.length; index < length; index++) {
-					this.children.push(this.context.childNodes[index]);
-				}
-			}
-
-			this.setModel(jmodel);
 
 			if (callback) {
 				callback.call(this);
@@ -369,211 +565,19 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 		});
 	};
 
-	Jmvc.View.prototype = Object.create(Jmvc.prototype);
-	Jmvc.View.prototype.constructor = Jmvc.View;
+	Jmvc.View.ModelView.prototype = Object.create(Jmvc.View.prototype);
+	Jmvc.View.ModelView.prototype.constructor = Jmvc.View.ModelView;
 
-	Jmvc.View.prototype.terminate = function () {
+	Jmvc.View.ModelView.prototype.terminate = function () {
 		cleanup(this);
-
-		for (let index = 0, length = this.children; index < length; index++) {
-			if (this.children[index] instanceof Jmvc.View) {
-				this.children[index].release();
-			}
-		}
-
-		return Jmvc.prototype.terminate.call(this);
+		return Jmvc.View.prototype.terminate.call(this);
 	};
 
-	Jmvc.View.prototype.setAttributes = function (attributes) {
-		this.attributes = attributes;
-
-		this.trigger('change:attributes');
-		this.trigger('change');
-
-		return this;
-	};
-
-	Jmvc.View.prototype.setChildren = function (children) {
-		for (let index = 0, length = this.children; index < length; index++) {
-			if (this.children[index] instanceof Jmvc.View) {
-				this.children[index].release();
-			}
-		}
-
-		this.children = children;
-
-		this.trigger('change:children');
-		this.trigger('change');
-
-		return this;
-	};
-
-	Jmvc.View.prototype.renderAttributes = function (callback) {
-		const processedAttributes = {};
-
-		const process = (attributes, key) => {
-			if (attributes == null) {
-				return [];
-			}
-
-			if (typeof attributes === 'function') {
-				return process(attributes.call(this), key);
-			}
-
-			if (attributes instanceof Promise) {
-				return [
-					attributes.then((attributes) => process(attributes, key))
-				];
-			}
-
-			if (typeof attributes === 'object') {
-				const promises = [];
-				for (const key in attributes) {
-					promises.push(...process(attributes[key], key));
-				}
-				return promises;
-			}
-
-			if (key != null) {
-				processedAttributes[key] = attributes;
-				this.context.setAttribute(key, attributes);
-				return [];
-			}
-
-			return [];
-		};
-
-		const promises = process(this.attributes);
-
-		const cleanup = () => {
-			const currentAttributes = {};
-
-			for (let index = 0, length = this.context.attributes.length; index < length; index++) {
-				const { name, value } = this.context.attributes[index];
-				currentAttributes[name] = value;
-			}
-
-			for (const key in currentAttributes) {
-				if (!(key in processedAttributes)) {
-					this.context.removeAttribute(key);
-				}
-			}
-		};
-
-		if (promises.length > 0) {
-			Promise.all(promises).then(() => cleanup());
-		} else {
-			cleanup();
-		}
-
-		if (callback) {
-			callback(promises);
-		}
-
-		return this.trigger('render:attributes', promises);
-	};
-
-	Jmvc.View.prototype.renderChildren = function (callback) {
-		while (this.context.firstChild) {
-			this.context.removeChild(this.context.lastChild);
-		}
-
-		const insertChild = (child, placeholder) => {
-			if (placeholder) {
-				this.context.insertBefore(child, placeholder);
-			} else {
-				this.context.append(child);
-			}
-		};
-
-		const process = (children, placeholder) => {
-			if (children == null) {
-				return [];
-			}
-
-			if (typeof children === 'boolean' || typeof children === 'number') {
-				return process(String(children), placeholder);
-			}
-
-			if (typeof children === 'string') {
-				insertChild(document.createTextNode(children), placeholder);
-				return [];
-			}
-
-			if (children instanceof Node) {
-				insertChild(children, placeholder);
-				return [];
-			}
-
-			if (children instanceof Jmvc.View) {
-				const promises = [];
-				children.render((renderPromises) => promises.push(...renderPromises));
-				promises.push(...process(children.context, placeholder));
-				return promises;
-			}
-
-			if (Array.isArray(children)) {
-				const promises = [];
-				for (let index = 0, length = children.length; index < length; index++) {
-					promises.push(...process(children[index], placeholder));
-				}
-				return promises;
-			}
-
-			if (typeof children === 'function') {
-				return process(children.call(this), placeholder);
-			}
-
-			if (children instanceof Promise) {
-				const newPlaceholder = document.createElement('span');
-				insertChild(newPlaceholder, placeholder);
-				return [
-					children
-						.then((children) => Promise.all(process(children, newPlaceholder)))
-						.then(() => this.context.removeChild(newPlaceholder))
-				];
-			}
-
-			return [];
-		};
-
-		const promises = process(this.children);
-
-		if (callback) {
-			callback(promises);
-		}
-
-		return this.trigger('render:children', promises);
-	};
-
-	Jmvc.View.prototype.render = function (callback) {
-		const promises = [];
-
-		this.renderAttributes((renderPromises) => promises.push(...renderPromises));
-		this.renderChildren((renderPromises) => promises.push(...renderPromises));
-
-		if (callback) {
-			callback(promises);
-		}
-
-		return this.trigger('render', promises);
-	};
-
-	Jmvc.View.prototype.appendTo = function (target) {
-		if (target instanceof Jmvc.View) {
-			target = target.context;
-		}
-
-		target.append(this.context);
-
-		return this;
-	};
-
-	Jmvc.View.prototype.setModel = function (jmodel = new Jmvc.Model()) {
+	Jmvc.View.ModelView.prototype.setModel = function (jmodel, watchEvent = 'change') {
 		cleanup(this);
 
 		this.model = jmodel;
-		this.listenTo(this.model, 'change', () => this.render());
+		this.listenTo(this.model, watchEvent, () => this.render());
 
 		return this;
 	};
@@ -583,14 +587,14 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 // STYLE
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-(() => {
-	Jmvc.View.Style = function (jmodel, callback) {
-		if (!(this instanceof Jmvc.View.Style)) {
-			return new Jmvc.View.Style(jmodel, callback);
-		}
+Jmvc.View.ModelView.Style = function (jmodel, callback) {
+	if (!(this instanceof Jmvc.View.ModelView.Style)) {
+		return new Jmvc.View.ModelView.Style(callback);
+	}
 
-		Jmvc.View.call(this, 'style', jmodel, () => {
-			this.setChildren(() => {
+	Jmvc.View.ModelView.call(this, 'style', jmodel, () => {
+		this
+			.setChildren(() => {
 				return Object.keys(this.model.context).reduce((acc, cur) => {
 					acc.push(cur, '{');
 
@@ -603,16 +607,16 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 
 					return acc;
 				}, []);
-			}).appendTo(document.head);
+			})
+			.appendTo(document.head);
 
-			if (callback) {
-				callback.call(this);
-			}
-		});
-	};
+		if (callback) {
+			callback.call(this);
+		}
+	});
+};
 
-	Jmvc.View.Style.prototype = Object.create(Jmvc.View.prototype);
-	Jmvc.View.Style.prototype.constructor = Jmvc.View.Style;
-})();
+Jmvc.View.ModelView.Style.prototype = Object.create(Jmvc.View.ModelView.prototype);
+Jmvc.View.ModelView.Style.prototype.constructor = Jmvc.View.ModelView.Style;
 
 /* exported Jmvc */
