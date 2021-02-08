@@ -1,64 +1,54 @@
-/* global Jmvc */
+/* global jmvc */
 
-(() => {
-	let initialized = false;
+jmvc.view.modelview.matrix = function (collection = jmvc.model.collection()) {
+	return Object.assign(jmvc.view.modelview('table', collection), {
+		rows: []
+	}, jmvc.view.modelview.matrix.methods).on('terminate', function () {
+		this.cleanup();
+	}).callback(function () {
+		this
+			.setAttributes({
+				'class': 'matrix'
+			})
+			.setChildren([
+				jmvc.view('tbody')
+					.setChildren(() => {
+						this.cleanup();
+						return this.rows = this.model.context.map((value) => jmvc.view('tr')
+							.retain()
+							.setChildren(value.map((value) => jmvc.view('td')
+								.setChildren([value]))));
+					})
+			]);
 
-	function cleanup(instance) {
-		for (let index = 0, length = instance.rows.length; index < length; index++) {
-			instance.rows[index].release();
+		if (!jmvc.view.modelview.matrix.initialized) {
+			jmvc.view.modelview.matrix.initialized = true;
+
+			jmvc.view.modelview.style(jmvc.model({
+				'table.matrix': {
+					'border-spacing': 0,
+					'border-collapse': 'collapse',
+					'margin': '1.5rem 0',
+					'width': '100%'
+				},
+				'table.matrix td, table.matrix th': {
+					'border': '1px solid #cccccc',
+					'padding': '0.5em 1rem'
+				}
+			}))
+				.retain()
+				.render()
+				.release();
+		}
+	});
+};
+
+jmvc.view.modelview.matrix.methods = {
+	cleanup() {
+		for (let index = 0, length = this.rows.length; index < length; index++) {
+			this.rows[index].release();
 		}
 	}
+};
 
-	Jmvc.View.ModelView.Matrix = function (jmodel, callback) {
-		if (!(this instanceof Jmvc.View.ModelView.Matrix)) {
-			return new Jmvc.View.ModelView.Matrix(jmodel, callback);
-		}
-
-		Jmvc.View.ModelView.call(this, 'table', jmodel, () => {
-			this.rows = [];
-			this
-				.setAttributes({ 'class': 'matrix' })
-				.setChildren([
-					new Jmvc.View('tbody')
-						.setChildren(() => {
-							cleanup(this);
-							return this.rows = this.model.context.map((value) => new Jmvc.View('tr')
-								.setChildren(value.map((value) => new Jmvc.View('td')
-									.setChildren([value]))));
-						})
-				]);
-
-			if (!initialized) {
-				initialized = true;
-
-				new Jmvc.View.ModelView.Style(new Jmvc.Model({
-					'table.matrix': {
-						'border-spacing': 0,
-						'border-collapse': 'collapse',
-						'margin': '1.5rem 0',
-						'width': '100%'
-					},
-					'table.matrix td, table.matrix th': {
-						'border': '1px solid #cccccc',
-						'padding': '0.5em 1rem'
-					}
-				}))
-					.render()
-					.release();
-
-			}
-
-			if (callback) {
-				callback.call(this);
-			}
-		});
-	};
-
-	Jmvc.View.ModelView.Matrix.prototype = Object.create(Jmvc.View.ModelView.prototype);
-	Jmvc.View.ModelView.Matrix.prototype.constructor = Jmvc.View.ModelView.Matrix;
-
-	Jmvc.View.ModelView.Matrix.prototype.terminate = function () {
-		cleanup(this);
-		return Jmvc.View.ModelView.prototype.terminate.call(this);
-	};
-})();
+jmvc.view.modelview.matrix.initialized = false;

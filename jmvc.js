@@ -1,245 +1,253 @@
-const Jmvc = function (context, callback) {
-	if (!(this instanceof Jmvc)) {
-		return new Jmvc(context);
-	}
+/* exported jmvc */
+function jmvc(context) {
+	return Object.assign({
+		context,
+		retainCount: 0,
+		events: {},
+		listeningto: []
+	}, jmvc.methods).on('terminate', function () {
+		this.off();
+		this.unlisten();
+	});
+}
 
-	this.context = context;
-	this.retainCount = 0;
-	this.events = {};
-	this.emitters = [];
+jmvc.methods = {
+	retain() {
+		if (this.retainCount === 0) {
+			this.trigger('initialize');
+		}
 
-	if (callback) {
-		callback.call(this);
-	}
+		this.retainCount++;
+		this.trigger('retain');
 
-	return this.initialize();
-};
+		return this;
+	},
 
-Jmvc.prototype.initialize = function () {
-	return this.trigger('initialize');
-};
+	release() {
+		if (this.retainCount > 0) {
+			this.retainCount--;
+			this.trigger('release');
+		}
 
-Jmvc.prototype.terminate = function () {
-	this.off();
-	this.stopListeningTo();
-	return this.trigger('terminate');
-};
 
-Jmvc.prototype.retain = function () {
-	this.retainCount++;
-	return this.trigger('retain');
-};
+		if (this.retainCount === 0) {
+			this.trigger('terminate');
+		}
 
-Jmvc.prototype.release = function () {
-	if (this.retainCount === 0) {
-		return this.terminate();
-	}
+		return this;
+	},
 
-	this.retainCount--;
-	return this.trigger('release');
-};
+	on(events, callback, once, listener) {
+		events = events.split(' ');
 
-Jmvc.prototype.callback = function (callback) {
-	callback(this);
-	return this;
-};
+		for (let index = 0, length = events.length; index < length; index++) {
+			const event = events[index];
 
-Jmvc.prototype.on = function (event, callback, once = false, owner = this) {
-	const process = (event) => {
-		if (!this.events[event]) {
-			this.events[event] = {
-				callbacks: []
-			};
-
-			if (this.context instanceof EventTarget) {
-				this.events[event].listener = {
-					handleEvent: (...args) => {
-						this.trigger(event, ...args);
-					}
+			if (this.events[event] == null) {
+				this.events[event] = {
+					callbacks: []
 				};
-				this.context.addEventListener(event, this.events[event].listener);
+
+				if (this.context instanceof EventTarget) {
+					this.events[event].listener = (...args) => this.trigger(event, ...args);
+					this.context.addEventListener(event, this.events[event].listener);
+				}
+			}
+
+			this.events[event].callbacks.push({ callback, once, listener });
+		}
+
+		if (listener != null && listener.listeningto.indexOf(this) === -1) {
+			listener.listeningto.push(this);
+		}
+
+		return this;
+	},
+
+	off(events, callback, once, listener) {
+		if (events) {
+			events = events.split(' ');
+		} else {
+			events = [];
+			for (const key in this.events) {
+				events.push(key);
 			}
 		}
 
-		this.events[event].callbacks.push({ event, callback, once, owner });
+		const listeners = [];
 
-		if (owner !== this && owner.emitters.indexOf(this) === -1) {
-			owner.emitters.push(this);
-		}
-	};
-
-	const events = event.split(' ').filter((event) => event);
-	for (let index = 0, length = events.length; index < length; index++) {
-		process(events[index]);
-	}
-
-	return this;
-};
-
-Jmvc.prototype.off = function (eventArg, callbackArg, onceArg, ownerArg) {
-	const removedOwners = [];
-
-	const process = (event) => {
-		let index = 0;
-		while (index < this.events[event].callbacks.length) {
-			const { callback, once, owner } = this.events[event].callbacks[index];
-			if ((callbackArg == null || callbackArg === callback)
-				&& (onceArg == null || onceArg === once)
-				&& (ownerArg == null || ownerArg === owner)) {
-
-				if (removedOwners.indexOf(owner) === -1) {
-					removedOwners.push(owner);
-				}
-
-				this.events[event].callbacks.splice(index, 1);
-
+		for (let eventIndex = 0, eventLength = events.length; eventIndex < eventLength; eventIndex++) {
+			const event = events[eventIndex];
+			if (this.events[event] == null) {
 				continue;
 			}
 
-			index++;
-		}
+			let callbackIndex = 0;
+			while (callbackIndex < this.events[event].callbacks.length) {
+				const callbackItem = this.events[event].callbacks[callbackIndex];
+				if ((callback == null || callback === callbackItem.callback)
+					&& (once == null || once === callbackItem.once)
+					&& (listener == null || listener === callbackItem.listener)) {
 
-		if (index === 0) {
-			if (this.events[event].listener) {
-				this.context.removeEventListener(event, this.events[event].listener);
+					this.events[event].callbacks.splice(callbackIndex, 1);
+
+					if (callbackItem.listener && listeners.indexOf(callbackItem.listener) === -1) {
+						listeners.push(callbackItem.listener);
+					}
+
+					continue;
+				}
+
+				callbackIndex++;
 			}
 
-			delete this.events[event];
-		}
-	};
+			if (callbackIndex === 0) {
+				if (this.events[event].listener) {
+					this.context.removeEventListener(event, this.events[event].listener);
+				}
 
-	if (eventArg != null) {
-		const events = eventArg.split(' ').filter((event) => event && this.events[event]);
-		for (let index = 0, length = events.length; index < length; index++) {
-			process(events[index]);
-		}
-	} else {
-		for (const event in this.events) {
-			process(event);
-		}
-	}
-
-	removeOwnersLoop:
-	for (let index = 0, length = removedOwners.length; index < length; index++) {
-		for (const key in this.events) {
-			if (!this.events[key].callbacks.every((callback) => callback.owner !== ownerArg)) {
-				continue removeOwnersLoop;
+				delete this.events[event];
 			}
 		}
 
-		const thisIndex = removedOwners[index].emitters.indexOf(this);
-		removedOwners[index].emitters.splice(thisIndex, 1);
-	}
+		listenersLoop:
+		for (let listenerIndex = 0, listenerLength = listeners.length; listenerIndex < listenerLength; listenerIndex++) {
+			const listener = listeners[listenerIndex];
 
-	return this;
-};
+			for (let eventIndex = 0, eventLength = this.events.length; eventIndex < eventLength; eventIndex++) {
+				const event = this.events[eventIndex];
 
-Jmvc.prototype.trigger = function (event, ...args) {
-	const callbacks = [];
+				for (let callbackIndex = 0, callbackLength = event.callbacks.length; callbackIndex < callbackLength; callbackIndex++) {
+					const callback = event.callbacks[callbackIndex];
 
-	const events = event.split(' ').filter((event) => event && this.events[event]);
-	for (let eventsIndex = 0, length = events.length; eventsIndex < length; eventsIndex++) {
-		callbacks.push(...this.events[events[eventsIndex]].callbacks);
-	}
+					if (callback.listener === listener) {
+						continue listenersLoop;
+					}
+				}
+			}
 
-	for (let index = 0, length = callbacks.length; index < length; index++) {
-		const callbackItem = callbacks[index];
-		if (index === callbacks.indexOf(callbackItem)) {
-			const { callback, owner } = callbackItem;
-			callback.call(owner, ...args);
+			const listeningtoIndex = listener.listeningto.indexOf(this);
+			if (listeningtoIndex !== -1) {
+				listener.listeningto.splice(listeningtoIndex, 1);
+			}
 		}
-	}
 
-	return this.off(event, null, true);
-};
+		return this;
+	},
 
-Jmvc.prototype.listenTo = function (other, event, callback, once) {
-	other.on(event, callback, once, this);
-	return this;
-};
+	trigger(events, ...args) {
+		const eventArray = events.split(' ');
 
-Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
-	if (other != null) {
-		other.off(event, callback, once, this);
-	} else {
-		for (let index = 0, length = this.emitters.length; index < length; index++) {
-			this.emitters[index].off(event, callback, once, this);
+		let callbacks = [];
+
+		for (let eventIndex = 0, eventLength = eventArray.length; eventIndex < eventLength; eventIndex++) {
+			const event = eventArray[eventIndex];
+			if (this.events[event] == null) {
+				continue;
+			}
+
+			for (let callbackIndex = 0, callbackLength = this.events[event].callbacks.length; callbackIndex < callbackLength; callbackIndex++) {
+				const callback = this.events[event].callbacks[callbackIndex].callback;
+				if (callbacks.indexOf(callback) === -1) {
+					callbacks.push(callback);
+				}
+			}
 		}
-	}
 
-	return this;
+		for (let index = 0, length = callbacks.length; index < length; index++) {
+			callbacks[index].call(this, ...args);
+		}
+
+		this.off(events, null, true);
+
+		return this;
+	},
+
+	listen(listenTo, events, callback, once) {
+		listenTo.on(events, callback, once, this);
+		return this;
+	},
+
+	unlisten(listenTo, events, callback, once) {
+		const emitters = [];
+		if (listenTo == null) {
+			emitters.push(...this.listeningto);
+		} else {
+			emitters.push(listenTo);
+		}
+
+		for (let index = 0, length = emitters.length; index < length; index++) {
+			emitters[index].off(events, callback, once, this);
+		}
+
+		return this;
+	},
+
+	callback(callback) {
+		callback.call(this);
+		return this;
+	}
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // MODEL
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-(() => {
-	function setModelProperty(instance, property) {
-		const value = instance.context[property];
-		const jvalue = value instanceof Jmvc.Model
-			? value.retain()
-			: value && typeof value === 'object'
-				? Array.isArray(value)
-					? new Jmvc.Model.Collection(value)
-					: new Jmvc.Model(value)
-				: false;
-
-		if (jvalue) {
-			instance.models[property] = jvalue;
-			instance.listenTo(jvalue, 'change', function () {
-				instance.trigger('change');
-			});
+jmvc.model = function (model = {}) {
+	return Object.assign(jmvc(model), {
+		models: {}
+	}, jmvc.model.methods).on('initialize', function () {
+		for (const property in this.context) {
+			this.setModelProperty(property);
 		}
-	}
-
-	function unsetModelProperty(instance, property) {
-		if (property in instance.models) {
-			instance.stopListeningTo(instance.models[property].release(), 'change');
-			delete instance.models[property];
-		}
-	}
-
-	Jmvc.Model = function (context = {}, callback) {
-		if (!(this instanceof Jmvc.Model)) {
-			return new Jmvc.Model(context);
-		}
-
-		Jmvc.call(this, context, () => {
-			this.models = {};
-
-			for (const property in this.context) {
-				setModelProperty(this, property);
-			}
-
-			if (callback) {
-				callback.call(this);
-			}
-		});
-	};
-
-	Jmvc.Model.prototype = Object.create(Jmvc.prototype);
-	Jmvc.Model.prototype.constructor = Jmvc.Model;
-
-	Jmvc.Model.prototype.terminate = function () {
+	}).on('terminate', function () {
 		for (const property in this.models) {
-			unsetModelProperty(this, property);
+			this.unsetModelProperty(property);
 		}
+	});
+};
 
-		return Jmvc.prototype.terminate.call(this);
-	};
-
-	Jmvc.Model.prototype.get = function (property) {
+jmvc.model.methods = {
+	setModelProperty(property) {
 		const value = this.context[property];
-		if (property in this.models) {
-			return this.models[property];
+		if (value != null && typeof value === 'object') {
+			let model;
+			if (Object.prototype.hasOwnProperty.call(value, 'retain')) {
+				model = value;
+			} else if (Array.isArray(value)) {
+				model = jmvc.model.collection(value);
+			} else {
+				model = jmvc.model(value);
+			}
+
+			this.listen(model, 'change', () => this.trigger('change'));
+			this.models[property] = model.retain();
 		}
 
-		return value;
-	};
+		return this;
+	},
 
-	Jmvc.Model.prototype.set = function (property, value) {
-		unsetModelProperty(this, property);
+	unsetModelProperty(property) {
+		if (this.models[property] != null) {
+			this.unlisten(this.models[property], 'change');
+			this.models[property].release();
+
+			delete this.models[property];
+		}
+
+		return this;
+	},
+
+	get(property) {
+		if (this.models[property] == null) {
+			return this.context[property];
+		}
+
+		return this.models[property];
+	},
+
+	set(property, value) {
+		this.unsetModelProperty(property);
 
 		if (value === undefined) {
 			delete this.context[property];
@@ -247,352 +255,357 @@ Jmvc.prototype.stopListeningTo = function (other, event, callback, once) {
 			this.context[property] = value;
 		}
 
-		setModelProperty(this, property);
+		this.setModelProperty(property);
 
 		this.trigger(`change:${property}`);
 		this.trigger('change');
 
 		return this;
-	};
+	},
 
-	Jmvc.Model.prototype.unset = function (property) {
+	unset(property) {
 		return this.set(property);
-	};
+	}
+};
 
-	(() => {
-		function mutateWith(instance, mutator, ...args) {
-			Array.prototype[mutator].call(instance.context, ...args);
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// COLLECTION
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-			const cleanModels = {};
-			for (const property in instance.models) {
-				const model = instance.models[property];
-				if (!(model in instance.context)) {
-					unsetModelProperty(instance, property);
-				} else {
-					cleanModels[instance.context.indexOf(model)] = model;
-				}
+jmvc.model.collection = function (collection = []) {
+	return Object(jmvc.model(collection), jmvc.model.collection.methods);
+};
+
+jmvc.model.collection.methods = {
+	mutateWith(mutator, ...args) {
+		Array.prototype[mutator].call(this.context, ...args);
+
+		const cleanModels = {};
+		for (const property in this.models) {
+			const model = this.models[property];
+			const newProperty = this.context.indexOf(model.context);
+			if (newProperty === -1) {
+				this.unsetModelProperty(property);
+			} else {
+				cleanModels[newProperty] = model;
 			}
+		}
+		this.models = cleanModels;
 
-			instance.models = cleanModels;
-
-			for (let index = 0, length = instance.context.length; index < length; index++) {
-				if (!(instance.context[index] in instance.models)) {
-					setModelProperty(instance, index);
-				}
+		for (let index = 0, length = this.context.length; index < length; index++) {
+			if (!(index in this.models)) {
+				this.setModelProperty(index);
 			}
-
-			return instance.trigger('change');
 		}
 
-		Jmvc.Model.Collection = function (context = [], callback) {
-			if (!(this instanceof Jmvc.Model.Collection)) {
-				return new Jmvc.Model.Collection(context);
-			}
+		this.trigger('change');
 
-			Jmvc.Model.call(this, context, callback);
-		};
+		return this;
+	},
 
-		Jmvc.Model.Collection.prototype = Object.create(Jmvc.Model.prototype);
-		Jmvc.Model.Collection.prototype.constructor = Jmvc.Model.Collection;
+	copyWithin(...args) {
+		this.mutateWith('copyWithin', ...args);
+	},
 
-		const mutators = ['copyWithin', 'fill', 'pop', 'push', 'reverse', 'shift', 'sort', 'splice'];
-		for (let index = 0, length = mutators.length; index < length; index++) {
-			const mutator = mutators[index];
-			Jmvc.Model.Collection.prototype[mutator] = function (...args) {
-				return mutateWith(this, mutator, ...args);
-			};
-		}
-	})();
-})();
+	fill(...args) {
+		this.mutateWith('copyWithin', ...args);
+	},
+
+	pop(...args) {
+		this.mutateWith('copyWithin', ...args);
+	},
+
+	push(...args) {
+		this.mutateWith('push', ...args);
+	},
+
+	reverse(...args) {
+		this.mutateWith('reverse', ...args);
+	},
+
+	shift(...args) {
+		this.mutateWith('shift', ...args);
+	},
+
+	sort(...args) {
+		this.mutateWith('sort', ...args);
+	},
+
+	splice(...args) {
+		this.mutateWith('splice', ...args);
+	}
+};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // VIEW
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-Jmvc.View = function (element, callback) {
-	if (!(this instanceof Jmvc.View)) {
-		return new Jmvc.View(element, callback);
+jmvc.view = function (view = 'div') {
+	if (typeof view === 'string') {
+		view = document.createElement(view);
 	}
 
-	element = typeof element === 'string' ? document.createElement(element) : element;
-	Jmvc.call(this, element, () => {
-		this.attributes = {};
+	return Object.assign(jmvc(view), {
+		attributes: {},
+		children: []
+	}, jmvc.view.methods).on('terminate', function () {
+		this.setChildren([]);
+	}).callback(function () {
 		if (this.context.hasAttributes()) {
+			const attributes = {};
 			for (let index = 0, length = this.context.attributes.length; index < length; index++) {
 				const { name, value } = this.context.attributes[index];
-				this.attributes[name] = value;
+				attributes[name] = value;
 			}
+			this.setAttributes(attributes);
 		}
 
-		this.children = [];
 		if (this.context.hasChildNodes()) {
+			const children = [];
 			for (let index = 0, length = this.context.childNodes.length; index < length; index++) {
-				this.children.push(this.context.childNodes[index]);
+				children.push(this.context.childNodes[index]);
 			}
-		}
-
-		if (callback) {
-			callback.call(this);
+			this.setChildren(children);
 		}
 	});
 };
 
-Jmvc.View.prototype = Object.create(Jmvc.prototype);
-Jmvc.View.prototype.constructor = Jmvc.View;
+jmvc.view.methods = {
+	setAttributes(attributes) {
+		this.attributes = attributes;
 
-Jmvc.View.prototype.terminate = function () {
-	for (let index = 0, length = this.children; index < length; index++) {
-		if (this.children[index] instanceof Jmvc.View) {
-			this.children[index].release();
-		}
-	}
-
-	return Jmvc.prototype.terminate.call(this);
-};
-
-Jmvc.View.prototype.setAttributes = function (attributes) {
-	this.attributes = attributes;
-
-	this.trigger('change:attributes');
-	this.trigger('change');
-
-	return this;
-};
-
-Jmvc.View.prototype.setChildren = function (children) {
-	for (let index = 0, length = this.children; index < length; index++) {
-		if (this.children[index] instanceof Jmvc.View) {
-			this.children[index].release();
-		}
-	}
-
-	this.children = children;
-
-	this.trigger('change:children');
-	this.trigger('change');
-
-	return this;
-};
-
-Jmvc.View.prototype.renderAttributes = function (callback) {
-	const processedAttributes = {};
-
-	const process = (attributes, key) => {
-		if (attributes == null) {
-			return [];
-		}
-
-		if (typeof attributes === 'function') {
-			return process(attributes.call(this), key);
-		}
-
-		if (attributes instanceof Promise) {
-			return [
-				attributes.then((attributes) => process(attributes, key))
-			];
-		}
-
-		if (typeof attributes === 'object') {
-			const promises = [];
-			for (const key in attributes) {
-				promises.push(...process(attributes[key], key));
-			}
-			return promises;
-		}
-
-		if (key != null) {
-			processedAttributes[key] = attributes;
-			this.context.setAttribute(key, attributes);
-			return [];
-		}
-
-		return [];
-	};
-
-	const promises = process(this.attributes);
-
-	const cleanup = () => {
-		const currentAttributes = {};
-
-		for (let index = 0, length = this.context.attributes.length; index < length; index++) {
-			const { name, value } = this.context.attributes[index];
-			currentAttributes[name] = value;
-		}
-
-		for (const key in currentAttributes) {
-			if (!(key in processedAttributes)) {
-				this.context.removeAttribute(key);
-			}
-		}
-	};
-
-	if (promises.length > 0) {
-		Promise.all(promises).then(() => cleanup());
-	} else {
-		cleanup();
-	}
-
-	if (callback) {
-		callback(promises);
-	}
-
-	return this.trigger('render:attributes', promises);
-};
-
-Jmvc.View.prototype.renderChildren = function (callback) {
-	while (this.context.firstChild) {
-		this.context.removeChild(this.context.lastChild);
-	}
-
-	const insertChild = (child, placeholder) => {
-		if (placeholder) {
-			this.context.insertBefore(child, placeholder);
-		} else {
-			this.context.append(child);
-		}
-	};
-
-	const process = (children, placeholder) => {
-		if (children == null) {
-			return [];
-		}
-
-		if (typeof children === 'boolean' || typeof children === 'number') {
-			return process(String(children), placeholder);
-		}
-
-		if (typeof children === 'string') {
-			insertChild(document.createTextNode(children), placeholder);
-			return [];
-		}
-
-		if (children instanceof Node) {
-			insertChild(children, placeholder);
-			return [];
-		}
-
-		if (children instanceof Jmvc.View) {
-			const promises = [];
-			children.render((renderPromises) => promises.push(...renderPromises));
-			promises.push(...process(children.context, placeholder));
-			return promises;
-		}
-
-		if (Array.isArray(children)) {
-			const promises = [];
-			for (let index = 0, length = children.length; index < length; index++) {
-				promises.push(...process(children[index], placeholder));
-			}
-			return promises;
-		}
-
-		if (typeof children === 'function') {
-			return process(children.call(this), placeholder);
-		}
-
-		if (children instanceof Promise) {
-			const newPlaceholder = document.createElement('span');
-			insertChild(newPlaceholder, placeholder);
-			return [
-				children
-					.then((children) => Promise.all(process(children, newPlaceholder)))
-					.then(() => this.context.removeChild(newPlaceholder))
-			];
-		}
-
-		return [];
-	};
-
-	const promises = process(this.children);
-
-	if (callback) {
-		callback(promises);
-	}
-
-	return this.trigger('render:children', promises);
-};
-
-Jmvc.View.prototype.render = function (callback) {
-	const promises = [];
-
-	this.renderAttributes((renderPromises) => promises.push(...renderPromises));
-	this.renderChildren((renderPromises) => promises.push(...renderPromises));
-
-	if (callback) {
-		callback(promises);
-	}
-
-	return this.trigger('render', promises);
-};
-
-Jmvc.View.prototype.appendTo = function (target) {
-	if (target instanceof Jmvc.View) {
-		target = target.context;
-	}
-
-	target.append(this.context);
-
-	return this;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// MODEL VIEW
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-(() => {
-	function cleanup(instance) {
-		if (instance.model) {
-			instance.stopListeningTo(instance.model);
-			instance.model.release();
-			instance.model = null;
-		}
-	}
-
-	Jmvc.View.ModelView = function (element, jmodel, callback) {
-		if (!(this instanceof Jmvc.View.ModelView)) {
-			return new Jmvc.View.ModelView(element, jmodel, callback);
-		}
-
-		Jmvc.View.call(this, element, () => {
-			if (jmodel) {
-				this.setModel(jmodel);
-			}
-
-			if (callback) {
-				callback.call(this);
-			}
-		});
-	};
-
-	Jmvc.View.ModelView.prototype = Object.create(Jmvc.View.prototype);
-	Jmvc.View.ModelView.prototype.constructor = Jmvc.View.ModelView;
-
-	Jmvc.View.ModelView.prototype.terminate = function () {
-		cleanup(this);
-		return Jmvc.View.prototype.terminate.call(this);
-	};
-
-	Jmvc.View.ModelView.prototype.setModel = function (jmodel, watchEvent = 'change') {
-		cleanup(this);
-
-		this.model = jmodel;
-		this.listenTo(this.model, watchEvent, () => this.render());
+		this.trigger('change:attributes');
+		this.trigger('change');
 
 		return this;
-	};
-})();
+	},
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// STYLE
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	setChildren(children) {
+		for (let index = 0, length = this.children.length; index < length; index++) {
+			const child = this.children[index];
+			if (Object.prototype.hasOwnProperty.call(child, 'release')) {
+				child.release();
+			}
+		}
 
-Jmvc.View.ModelView.Style = function (jmodel, callback) {
-	if (!(this instanceof Jmvc.View.ModelView.Style)) {
-		return new Jmvc.View.ModelView.Style(callback);
+		this.children = children;
+		for (let index = 0, length = this.children.length; index < length; index++) {
+			const child = this.children[index];
+			if (Object.prototype.hasOwnProperty.call(child, 'retain')) {
+				child.retain();
+			}
+		}
+
+		this.trigger('change:children');
+		this.trigger('change');
+
+		return this;
+	},
+
+	renderAttributes(callback) {
+		const processedAttributes = {};
+
+		const process = (attributes, key) => {
+			if (attributes == null) {
+				return [];
+			}
+
+			if (typeof attributes === 'function') {
+				return process(attributes.call(this), key);
+			}
+
+			if (attributes instanceof Promise) {
+				return [
+					attributes.then((attributes) => process(attributes, key))
+				];
+			}
+
+			if (typeof attributes === 'object') {
+				const promises = [];
+				for (const key in attributes) {
+					promises.push(...process(attributes[key], key));
+				}
+				return promises;
+			}
+
+			if (key != null) {
+				processedAttributes[key] = attributes;
+				this.context.setAttribute(key, attributes);
+				return [];
+			}
+
+			return [];
+		};
+
+		const promises = process(this.attributes);
+
+		const cleanup = () => {
+			const currentAttributes = {};
+
+			for (let index = 0, length = this.context.attributes.length; index < length; index++) {
+				const { name, value } = this.context.attributes[index];
+				currentAttributes[name] = value;
+			}
+
+			for (const key in currentAttributes) {
+				if (!(key in processedAttributes)) {
+					this.context.removeAttribute(key);
+				}
+			}
+		};
+
+		if (promises.length > 0) {
+			Promise.all(promises).then(() => cleanup());
+		} else {
+			cleanup();
+		}
+
+		if (callback) {
+			callback(promises);
+		}
+
+		this.trigger('render:attributes', promises);
+		return this;
+	},
+
+	renderChildren(callback) {
+		while (this.context.firstChild) {
+			this.context.removeChild(this.context.lastChild);
+		}
+
+		const insertChild = (child, placeholder) => {
+			if (placeholder) {
+				this.context.insertBefore(child, placeholder);
+			} else {
+				this.context.append(child);
+			}
+		};
+
+		const process = (children, placeholder) => {
+			if (children == null) {
+				return [];
+			}
+
+			if (typeof children === 'boolean' || typeof children === 'number') {
+				return process(String(children), placeholder);
+			}
+
+			if (typeof children === 'string') {
+				insertChild(document.createTextNode(children), placeholder);
+				return [];
+			}
+
+			if (children instanceof Node) {
+				insertChild(children, placeholder);
+				return [];
+			}
+
+			if (Object.prototype.hasOwnProperty.call(children, 'render')) {
+				const promises = [];
+				children.render((renderPromises) => promises.push(...renderPromises));
+				promises.push(...process(children.context, placeholder));
+				return promises;
+			}
+
+			if (Array.isArray(children)) {
+				const promises = [];
+				for (let index = 0, length = children.length; index < length; index++) {
+					promises.push(...process(children[index], placeholder));
+				}
+				return promises;
+			}
+
+			if (typeof children === 'function') {
+				return process(children.call(this), placeholder);
+			}
+
+			if (children instanceof Promise) {
+				const newPlaceholder = document.createElement('span');
+				insertChild(newPlaceholder, placeholder);
+				return [
+					children
+						.then((children) => Promise.all(process(children, newPlaceholder)))
+						.then(() => this.context.removeChild(newPlaceholder))
+				];
+			}
+
+			return [];
+		};
+
+		const promises = process(this.children);
+
+		if (callback) {
+			callback(promises);
+		}
+
+		this.trigger('render:children', promises);
+		return this;
+	},
+
+	render(callback) {
+		const promises = [];
+
+		this.renderAttributes((renderPromises) => promises.push(...renderPromises));
+		this.renderChildren((renderPromises) => promises.push(...renderPromises));
+
+		if (callback) {
+			callback(promises);
+		}
+
+		this.trigger('render', promises);
+		return this;
+	},
+
+	appendTo(target) {
+		if (Object.prototype.hasOwnProperty.call(target, 'context')) {
+			target = target.context;
+		}
+
+		target.append(this.context);
+
+		return this;
 	}
+};
 
-	Jmvc.View.ModelView.call(this, 'style', jmodel, () => {
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MODEL-VIEW
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+jmvc.view.modelview = function (view, model) {
+	return Object.assign(jmvc.view(view), {
+		model: null
+	}, jmvc.view.modelview.methods).on('terminate', function () {
+		this.setModel();
+	}).callback(function () {
+		this.setModel(model);
+	});
+};
+
+jmvc.view.modelview.methods = {
+	setModel(model, listenEvent = 'change') {
+		if (this.model) {
+			this.unlisten(this.model);
+			this.model.release();
+			this.model = null;
+		}
+
+		if (model) {
+			this.model = model.retain();
+			this.listen(this.model, listenEvent, () => {
+				this.render();
+			});
+		}
+
+		return this;
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// STYLE MODEL-VIEW
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+jmvc.view.modelview.style = function (model) {
+	return jmvc.view.modelview('style', model).callback(function () {
 		this
 			.setChildren(() => {
 				return Object.keys(this.model.context).reduce((acc, cur) => {
@@ -609,14 +622,5 @@ Jmvc.View.ModelView.Style = function (jmodel, callback) {
 				}, []);
 			})
 			.appendTo(document.head);
-
-		if (callback) {
-			callback.call(this);
-		}
 	});
 };
-
-Jmvc.View.ModelView.Style.prototype = Object.create(Jmvc.View.ModelView.prototype);
-Jmvc.View.ModelView.Style.prototype.constructor = Jmvc.View.ModelView.Style;
-
-/* exported Jmvc */

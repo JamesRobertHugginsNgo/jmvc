@@ -1,58 +1,68 @@
-/* global Jmvc */
+/* global jmvc */
 
-(() => {
-	let initialized = false;
+jmvc.view.modelview.test = function (model = jmvc.model()) {
+	return Object(jmvc.view.modelview('div', model), jmvc.view.modelview.test.methods).callback(function () {
+		this
+			.setAttributes({
+				'class': 'test',
+				'data-id': () => this.model.context.id
+			})
+			.setChildren([
+				jmvc.view('button')
+					.setAttributes({ 'type': 'button' })
+					.setChildren([() => `{{ ${this.model.context.id || 'EMPTY'} }}`])
+					.on('click', () => this.model.set('id', Math.random() * 100))
+			]);
 
-	Jmvc.View.ModelView.Test = function (jmodel, callback) {
-		if (!(this instanceof Jmvc.View.ModelView.Test)) {
-			return new Jmvc.View.ModelView.Test(jmodel, callback);
+		if (!jmvc.view.modelview.test.initialized) {
+			jmvc.view.modelview.test.initialized = true;
+
+			jmvc.view.modelview.style(jmvc.model({
+				'div.test': {
+					'background-color': '#dff9fb',
+					'border': '1px dashed #666666',
+					'border-radius': '0.4rem',
+					'font-size': '1rem',
+					'line-height': '1.5',
+					'margin': '1.5rem 0',
+					'padding': '1.5rem'
+				},
+				'div.test button': {
+					'cursor': 'pointer',
+					'color': '#ffffff',
+					'background-color': '#0d6efd',
+					'border-color': '#0d6efd',
+					'display': 'inline-block',
+					'font-weight': 400,
+					'line-height': 1.5,
+					'text-align': 'center',
+					'text-decoration': 'none',
+					'vertical-align': 'middle',
+					'user-select': 'none',
+					'border': '1px solid transparent',
+					'padding': '.375rem .75rem',
+					'font-size': '1rem',
+					'border-radius': '.25rem',
+					'transition': 'color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out,box-shadow .15s ease-in-out',
+					'text-transform': 'none'
+				},
+				'div.test button:hover': {
+					'color': '#fff',
+					'background-color': '#0b5ed7',
+					'border-color': '#0a58ca'
+				}
+			}))
+				.retain()
+				.render()
+				.release();
 		}
+	});
+};
 
-		Jmvc.View.ModelView.call(this, 'div', jmodel, () => {
-			this
-				.setAttributes({
-					'class': 'test',
-					'data-id': () => this.model.context.id
-				})
-				.setChildren([
-					new Jmvc.View('button')
-						.setAttributes({ 'type': 'button' })
-						.setChildren([() => `{{ ${this.model.context.id || 'EMPTY'} }}`])
-						.on('click', () => this.model.set('id', Math.random() * 100))
-				]);
+jmvc.view.modelview.test.methods = {
+	setModel(model) {
+		return jmvc.view.modelview.methods.setModel.call(this, model, 'change:id');
+	}
+};
 
-			if (!initialized) {
-				initialized = true;
-
-				new Jmvc.View.ModelView.Style(new Jmvc.Model({
-					'div.test': {
-						'background-color': '#dff9fb',
-						'border': '1px dashed #666666',
-						'border-radius': '0.4rem',
-						'font-size': '1rem',
-						'line-height': '1.5',
-						'margin': '1.5rem 0',
-						'padding': '1.5rem'
-					},
-					'div.test button': {
-						'font-size': '1rem',
-						'line-height': '1.5'
-					}
-				}))
-					.render()
-					.release();
-			}
-
-			if (callback) {
-				callback.call(this);
-			}
-		});
-	};
-
-	Jmvc.View.ModelView.Test.prototype = Object.create(Jmvc.View.ModelView.prototype);
-	Jmvc.View.ModelView.Test.prototype.constructor = Jmvc.View.ModelView.Test;
-
-	Jmvc.View.ModelView.Test.prototype.setModel = function (jmodel) {
-		return Jmvc.View.ModelView.prototype.setModel.call(this, jmodel, 'change:id');
-	};
-})();
+jmvc.view.modelview.test.initialized = false;
