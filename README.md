@@ -1,2 +1,2 @@
 # jmvc
-James Model View Controller
+James' Model View Controller
